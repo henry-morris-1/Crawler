@@ -1,0 +1,10 @@
+{
+    "dependencies": {
+        "pa11y": "^9.0.0",
+        "puppeteer": "^24.11.1"
+    },
+    "scripts": {
+        "crawl": "node --env-file=.env crawler.js"
+    },
+    "type": "module"
+}
