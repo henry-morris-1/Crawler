@@ -18,63 +18,91 @@ if (isMainThread) {
     const browser = await puppeteer.launch({ browser: 'firefox' })
     const page = await browser.newPage()
 
-    try {
+    parentPort.on('message', async message => {
 
-        await page.goto(workerData.url, { waitUntil: 'networkidle2' })
-        const links = await getLinks(page)
+        console.log(message.url)
 
-        parentPort.postMessage({
-            url: workerData.url,
-            links: links
-        })
+        if (message.url) {
 
-    } catch (error) {
+            try {
 
-        parentPort.postMessage({
-            url: workerData.url,
-            links: []
-        })
+                await page.goto(message.url, { waitUntil: 'networkidle2' })
+                const links = await getLinks(page)
 
-    } finally {
+                parentPort.postMessage({
+                    url: message.url,
+                    links: links
+                })
 
-        await browser.close()
+            } catch (error) {
 
-    }
+                parentPort.postMessage({
+                    url: message.url,
+                    links: []
+                })
+
+            }
+
+        } else {
+
+            await browser.close()
+            parentPort.postMessage('finished')
+
+        }
+
+    })
 
 }
 
 function createWorker(url, isFirst = false) {
 
-    const worker = new Worker(import.meta.filename, { workerData: { url: url } })
+    console.log('thread created')
 
+    const worker = new Worker(import.meta.filename)
+
+    worker.on('online', () => {
+
+        worker.postMessage({ url: url })
+
+    })
     worker.on('message', message => {
 
-        visited.add(message.url)
+        if (message.url) {
 
-        message.links.forEach(link => {
+            visited.add(message.url)
 
-            if (link != message.url && !queued.has(link) && !visited.has(link)) {
-                queued.add(link)
-            }
+                message.links.forEach(link => {
 
-        })
+                    if (link !== message.url && !queued.has(link) && !visited.has(link)) {
+                        queued.add(link)
+                    }
+
+                })
+
+                if (isFirst) {
+
+                    for (let i = 0; i < Math.min(maxThreads, queued.size); i++) {
+                        assignTask()
+                    }
+
+                } else {
+
+                    assignTask(worker)
+
+                }
+
+        } else {
+
+            worker.terminate()
+
+        }
 
     })
     worker.on('exit', () => {
 
+        console.log('thread deleted')
         threads.delete(worker)
-
-        if (isFirst) {
-
-            for (let i = 0; i < Math.min(maxThreads, queued.size); i++) {
-                addWorker()
-            }
-
-        } else {
-
-            addWorker()
-
-        }
+        assignTask()
 
     })
     worker.on('error', error => {
@@ -87,16 +115,31 @@ function createWorker(url, isFirst = false) {
 
 }
 
-function addWorker() {
+function assignTask(worker) {
 
     if (queued.size > 0 && (visited.size + threads.size) < process.env.MAX_PAGES) {
 
         const url = Array.from(queued)[0]
         queued.delete(url)
 
-        createWorker(url)
+        if (worker) {
+
+            worker.postMessage({ url: url })
+
+        } else {
+
+            createWorker(url)
+
+        }
+        
 
     } else {
+
+        if (worker) {
+
+            worker.postMessage({})
+
+        }
 
         if (threads.size == 0) {
 
