@@ -7,6 +7,7 @@ const queued = new Set()
 const visited = new Set()
 
 const maxThreads = navigator.hardwareConcurrency || process.env.DEFAULT_MAX_THREADS
+const threads = new Set()
 
 if (isMainThread) {
 
@@ -27,11 +28,7 @@ if (isMainThread) {
     try {
 
         await page.goto(workerData.url, { waitUntil: 'networkidle0' })
-
-        let links = []
-        if (workerData.doSearch) {
-            links = await getLinks(page)
-        }
+        const links = await getLinks(page)
 
         parentPort.postMessage({
             url: workerData.url,
@@ -55,9 +52,7 @@ if (isMainThread) {
 
 function createWorker(url, isFirst = false) {
 
-    const enoughItemsQueued = (visited.size + queued.size) >= process.env.MAX_PAGES
-
-    const worker = new Worker(import.meta.filename, { workerData: { url: url, doSearch: !enoughItemsQueued } })
+    const worker = new Worker(import.meta.filename, { workerData: { url: url } })
 
     worker.on('message', message => {
 
@@ -65,9 +60,7 @@ function createWorker(url, isFirst = false) {
 
         message.links.forEach(link => {
 
-            const isNew = link != message.url && !queued.has(link) && !visited.has(link)
-
-            if (!enoughItemsQueued && isNew) {
+            if (link != message.url && !queued.has(link) && !visited.has(link)) {
                 queued.add(link)
             }
 
@@ -75,6 +68,8 @@ function createWorker(url, isFirst = false) {
 
     })
     worker.on('exit', () => {
+
+        threads.delete(worker)
 
         if (isFirst) {
 
@@ -95,16 +90,27 @@ function createWorker(url, isFirst = false) {
 
     })
 
+    threads.add(worker)
+
 }
 
 function addWorker() {
 
-    if (queued.size > 0 && visited.size < process.env.MAX_PAGES) {
+    if (queued.size > 0 && (visited.size + threads.size) < process.env.MAX_PAGES) {
 
         const url = Array.from(queued)[0]
         queued.delete(url);
 
         createWorker(url)
+
+    } else {
+
+        if (threads.size == 0) {
+
+            console.log(visited.size + ' pages visited')
+            console.log(queued.size + ' pages queued')
+
+        }
 
     }
 
