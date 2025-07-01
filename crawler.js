@@ -6,7 +6,7 @@ import { Worker, isMainThread, parentPort, workerData } from 'worker_threads'
 const queued = new Set()
 const visited = new Set()
 
-const maxThreads = navigator.hardwareConcurrency || process.env.DEFAULT_MAX_THREADS
+const maxThreads = navigator.hardwareConcurrency-1 || process.env.DEFAULT_MAX_THREADS
 const threads = new Set()
 
 if (isMainThread) {
@@ -17,17 +17,10 @@ if (isMainThread) {
 
     const browser = await puppeteer.launch({ browser: 'firefox' })
     const page = await browser.newPage()
-    await page.setViewport({
-        width: 1280,
-        height: 720,
-        deviceScaleFactor: 1,
-        isMobile: false,
-        hasTouch: false
-    })
 
     try {
 
-        await page.goto(workerData.url, { waitUntil: 'networkidle0' })
+        await page.goto(workerData.url, { waitUntil: 'networkidle2' })
         const links = await getLinks(page)
 
         parentPort.postMessage({
@@ -99,7 +92,7 @@ function addWorker() {
     if (queued.size > 0 && (visited.size + threads.size) < process.env.MAX_PAGES) {
 
         const url = Array.from(queued)[0]
-        queued.delete(url);
+        queued.delete(url)
 
         createWorker(url)
 
