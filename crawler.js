@@ -1,64 +1,24 @@
 'use strict'
+import { Worker } from 'worker_threads'
 
-import puppeteer from 'puppeteer'
-import { Worker, isMainThread, parentPort, workerData } from 'worker_threads'
 
 const queued = new Set()
 const visited = new Set()
 
 const maxThreads = navigator.hardwareConcurrency-1 || process.env.DEFAULT_MAX_THREADS
 const threads = new Set()
+let threadCount = 0
 
-if (isMainThread) {
 
-    createWorker(process.env.START_URL, true)
+createWorker(process.env.START_URL)
 
-} else {
 
-    const browser = await puppeteer.launch({ browser: 'firefox' })
-    const page = await browser.newPage()
+function createWorker(url) {
 
-    parentPort.on('message', async message => {
+    const worker = new Worker('./worker.js')
 
-        console.log(message.url)
-
-        if (message.url) {
-
-            try {
-
-                await page.goto(message.url, { waitUntil: 'networkidle2' })
-                const links = await getLinks(page)
-
-                parentPort.postMessage({
-                    url: message.url,
-                    links: links
-                })
-
-            } catch (error) {
-
-                parentPort.postMessage({
-                    url: message.url,
-                    links: []
-                })
-
-            }
-
-        } else {
-
-            await browser.close()
-            parentPort.postMessage('finished')
-
-        }
-
-    })
-
-}
-
-function createWorker(url, isFirst = false) {
-
-    console.log('thread created')
-
-    const worker = new Worker(import.meta.filename)
+    threads.add(worker)
+    threadCount++
 
     worker.on('online', () => {
 
@@ -67,42 +27,31 @@ function createWorker(url, isFirst = false) {
     })
     worker.on('message', message => {
 
-        if (message.url) {
+        visited.add(message.url)
 
-            visited.add(message.url)
+        message.links.forEach(link => {
 
-                message.links.forEach(link => {
+            if (link !== message.url && !queued.has(link) && !visited.has(link)) {
+                queued.add(link)
+            }
 
-                    if (link !== message.url && !queued.has(link) && !visited.has(link)) {
-                        queued.add(link)
-                    }
+        })
 
-                })
+        assignTask(worker)
 
-                if (isFirst) {
-
-                    for (let i = 0; i < Math.min(maxThreads, queued.size); i++) {
-                        assignTask()
-                    }
-
-                } else {
-
-                    assignTask(worker)
-
-                }
-
-        } else {
-
-            worker.terminate()
-
+        for (let i = threadCount; i < Math.min(maxThreads-1, queued.size); i++) {
+            assignTask()
         }
 
     })
     worker.on('exit', () => {
 
-        console.log('thread deleted')
         threads.delete(worker)
-        assignTask()
+        threadCount--
+
+        if (threadCount == 0) {
+            console.log(`---\n${visited.size} pages visited\n${queued.size} pages remain queued`)
+        }
 
     })
     worker.on('error', error => {
@@ -110,8 +59,6 @@ function createWorker(url, isFirst = false) {
         throw error
 
     })
-
-    threads.add(worker)
 
 }
 
@@ -123,44 +70,14 @@ function assignTask(worker) {
         queued.delete(url)
 
         if (worker) {
-
             worker.postMessage({ url: url })
 
         } else {
-
             createWorker(url)
-
-        }
-        
-
-    } else {
-
-        if (worker) {
-
-            worker.postMessage({})
-
         }
 
-        if (threads.size == 0) {
-
-            console.log(visited.size + ' pages visited')
-            console.log(queued.size + ' pages queued')
-
-        }
-
+    } else if (worker) {
+        worker.postMessage({})
     }
-
-}
-
-async function getLinks(page) {
-
-    const links = await page.$$eval('a', as => as.map(a => a.href))
-    return links.filter(link => validate(link))
-
-}
-
-function validate(url) {
-
-    return url.length > 0 && /^https?:\/\//.test(url)
 
 }
